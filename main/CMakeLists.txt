@@ -1,11 +1,18 @@
 idf_component_register(
 	SRCS
 		"main.c"
+		"wifi_remote.c"
+		"sdcard.c"
 	PRIV_REQUIRES
+		esp_hosted
+		wpa_supplicant
 		esp_lcd
+		mqtt
 		fatfs
 		nvs_flash
 		badge-bsp
+		pax-codecs
+		wifi-manager
 	INCLUDE_DIRS
 		"."
 )
