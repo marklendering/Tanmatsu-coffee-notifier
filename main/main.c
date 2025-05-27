@@ -58,6 +58,7 @@ static esp_lcd_panel_handle_t    lcd_panel         = NULL;
 static QueueHandle_t                input_event_queue    = NULL;
 SemaphoreHandle_t line_mutex;
 esp_mqtt_client_handle_t client = NULL;
+bsp_power_battery_information_t battery_info;
 
 extern uint8_t const wallpaper_start[] asm("_binary_wallpaper_png_start");
 extern uint8_t const wallpaper_end[] asm("_binary_wallpaper_png_end");
@@ -94,7 +95,7 @@ bool sd_card_present = false;
 const char* menu_title = "Event Notifier";
 const char* connection_status = "Wi-Fi: Connected";
 const char* footer_text = "Use left/right to navigate. Press return to select.";
-const char* buttons[] = {"Button1", "Button2", "Button3"};
+const char* buttons[] = {"Nyan", "Coffee", "Lunch"};
 #define NUM_BUTTONS 3
 
 
@@ -128,6 +129,20 @@ void set_led_color(uint8_t led, uint32_t color) {
 
 static void led_task(void* pvParameters) {
     while (1) {
+        esp_err_t res = bsp_power_get_battery_information(&battery_info);
+        if(res == ESP_OK) {
+            if(battery_info.power_supply_available) {
+                set_led_color(0, LED_GREEN);
+            } else if(battery_info.remaining_percentage < 50.0) {
+                set_led_color(0, LED_YELLOW);
+            } else if(battery_info.remaining_percentage < 15.0) {
+                set_led_color(0, LED_RED);
+            } else {
+                set_led_color(0, LED_BLUE); 
+            }
+        } 
+
+
         if(wifi_connected) set_led_color(1, LED_GREEN); // wifi led
         else if(wifi_connecting) set_led_color(1, LED_YELLOW);
         else set_led_color(1, LED_RED);
@@ -166,26 +181,26 @@ static void led_task(void* pvParameters) {
 int selected_button = 0;
 
 // Example callback handlers
-void button1_action() {
+void nyanButton_Action() {
     printf("Button 1 pressed!\n");
-    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "button 1", 0, 1, 0);
+    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Event: Nyan", 0, 1, 0);
 }
 
-void button2_action() {
+void coffeeButton_Action() {
     printf("Button 2 pressed!\n");
-    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "button 2", 0, 1, 0);
+    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Event: Coffee", 0, 1, 0);
 }
 
-void button3_action() {
+void lunchButton_Action() {
     printf("Button 3 pressed!\n");
-    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "button 3", 0, 1, 0);
+    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Event: Lunch", 0, 1, 0);
 }
 
 // Hook button callbacks
 void (*button_callbacks[])() = {
-    button1_action,
-    button2_action,
-    button3_action
+    nyanButton_Action,
+    coffeeButton_Action,
+    lunchButton_Action
 };
 
 // Drawing functions
@@ -217,7 +232,7 @@ void draw_buttons(pax_buf_t *buf) {
         pax_outline_rect(buf, color, x, y, BUTTON_WIDTH, BUTTON_HEIGHT);
         if((i == selected_button))
             pax_draw_rect(buf, highlight_color, x, y, BUTTON_WIDTH, BUTTON_HEIGHT);
-        pax_draw_text(buf, 0xFF000000, pax_font_sky_mono, 16, x + 10, y + 12, buttons[i]);
+        pax_draw_text(buf, 0xFF000000, pax_font_sky_mono, 16, x + 10, y + 42, buttons[i]);
     }
 }
 
@@ -461,7 +476,7 @@ void app_main(void) {
                     if (event.args_navigation.state) {
                         switch (event.args_navigation.key) {
                             case BSP_INPUT_NAVIGATION_KEY_F1:
-                                if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "I require coffee!", 0, 1, 0);
+                                if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Debug: I require coffee!", 0, 1, 0);
                                 mqtt_msg_transmit = true;
                                 break;
                             case BSP_INPUT_NAVIGATION_KEY_RIGHT:
