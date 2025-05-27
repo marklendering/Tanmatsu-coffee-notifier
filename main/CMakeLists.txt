@@ -17,5 +17,5 @@ idf_component_register(
 	INCLUDE_DIRS
 		"."
 	EMBED_FILES
-        "wallpaper_event_notifier.png"
+        "wallpaper.png"
 )
