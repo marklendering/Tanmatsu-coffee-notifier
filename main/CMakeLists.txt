@@ -4,7 +4,8 @@ idf_component_register(
 		"wifi_remote.c"
 		"sdcard.c"
 	PRIV_REQUIRES
-		esp_hosted
+		esp-hosted-tanmatsu
+		esp-wifi-remote-tanmatsu
 		wpa_supplicant
 		esp_lcd
 		mqtt
@@ -15,4 +16,6 @@ idf_component_register(
 		wifi-manager
 	INCLUDE_DIRS
 		"."
+	EMBED_FILES
+        "wallpaper_event_notifier.png"
 )

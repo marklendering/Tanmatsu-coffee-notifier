@@ -57,6 +57,9 @@ static esp_lcd_panel_handle_t    lcd_panel         = NULL;
 static QueueHandle_t                input_event_queue    = NULL;
 SemaphoreHandle_t line_mutex;
 
+extern uint8_t const wallpaper_start[] asm("_binary_wallpaper_event_notifier_png_start");
+extern uint8_t const wallpaper_end[] asm("_binary_wallpaper_event_notifier_png_end");
+
 
 #define num_lines 17
 #define num_chars 60
@@ -213,7 +216,13 @@ static void mqtt_app_start(void) {
     esp_mqtt_client_start(client);
 }
 
+void wallpaper(int h_res, int v_res) {
+    pax_insert_png_buf(&fb, wallpaper_start, wallpaper_end - wallpaper_start, 0, 0, 0);
+    esp_lcd_panel_draw_bitmap(lcd_panel, 0, 0, h_res, v_res, pax_buf_get_pixels(&fb));
+}
+
 void app_main(void) {
+    init();
     // Start the GPIO interrupt service
     gpio_install_isr_service(0);
 
@@ -277,33 +286,33 @@ void app_main(void) {
     pax_buf_init(&fb, NULL, display_h_res, display_v_res, format);
     pax_buf_reversed(&fb, display_data_endian == LCD_RGB_DATA_ENDIAN_BIG);
     pax_buf_set_orientation(&fb, orientation);
+
+    wallpaper(display_h_res, display_v_res);
     
     // Get input event queue from BSP
     ESP_ERROR_CHECK(bsp_input_get_queue(&input_event_queue));
     
     ESP_LOGW(TAG, "Hello world!");
     
-    init();
-    blit();
     
     bsp_led_initialize();
     xTaskCreate(led_task, TAG, 4096, NULL, 10, NULL);
     
     bool sdcard_inserted = false;
     bsp_input_read_action(BSP_INPUT_ACTION_TYPE_SD_CARD, &sdcard_inserted);
-
+    
     if (sdcard_inserted) {
         printf("SD card detected\r\n");
-#if defined(CONFIG_BSP_TARGET_TANMATSU) || defined(CONFIG_BSP_TARGET_KONSOOL) || \
-    defined(CONFIG_BSP_TARGET_HACKERHOTEL_2026)
+        #if defined(CONFIG_BSP_TARGET_TANMATSU) || defined(CONFIG_BSP_TARGET_KONSOOL) || \
+        defined(CONFIG_BSP_TARGET_HACKERHOTEL_2026)
         sd_pwr_ctrl_handle_t sd_pwr_handle = initialize_sd_ldo();
         sd_mount_spi(sd_pwr_handle);
         sd_card_present = true;
         test_sd();
-#endif
+        #endif
     }
     
-     if (wifi_remote_initialize() == ESP_OK) {
+    if (wifi_remote_initialize() == ESP_OK) {
         wifi_connection_init_stack();
         wifi_connecting = true;
         wifi_connect_try_all();
@@ -317,8 +326,8 @@ void app_main(void) {
         bsp_power_set_radio_state(BSP_POWER_RADIO_STATE_OFF);
         ESP_LOGE(TAG, "WiFi radio not responding, did you flash ESP-HOSTED firmware?");
         add_line("wifi radio fail");
-        blit();
     }
+    blit();
     
     vTaskDelay(pdMS_TO_TICKS(500)); // make sure wifi is properly connected
     mqtt_app_start();
@@ -328,9 +337,11 @@ void app_main(void) {
         // 1. Show big clock by default, when any button is pressed show graphical interface
         // 2. Add graphics interface with buttons.
         // 3. Parse json data received from mqtt
-        // 4 generate json data to be transmitted
+        // 4. generate json data to be transmitted
         // 5. Add encryption for messages
         // 6. Add player that shows gifs on screen
+        // 7. read mqtt settings from sd card. Ask to continue with default settings if no sd card present
+        // 8. Add wallpaper - done
 
         bsp_input_event_t event;
         if (xQueueReceive(input_event_queue, &event, portMAX_DELAY) == pdTRUE) {
