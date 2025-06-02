@@ -31,6 +31,7 @@
 
 #include "mqtt_client.h"
 #include "esp_netif.h"
+#include "esp_sntp.h"
 
 #include "lwip/ip4_addr.h"
 #include "lwip/inet.h"
@@ -77,6 +78,7 @@ time_t now_time;
 struct tm timeinfo;
 
 uint8_t msg_led_cnt = 0;
+bool mqtt_initialized = false;
 bool mqtt_msg_event = false;
 bool mqtt_msg_transmit = false;
 bool wifi_connected = false;
@@ -178,22 +180,29 @@ static void led_task(void* pvParameters) {
     }
 }
 
+static void mqtt_publish_task(void* pvParameters) {
+    char* text = (char*)pvParameters;
+    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", text, 0, 1, 0);
+    mqtt_msg_transmit = true;
+    vTaskDelete(NULL);
+}
+
 int selected_button = 0;
 
 // Example callback handlers
 void nyanButton_Action() {
     printf("Button 1 pressed!\n");
-    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Event: Nyan", 0, 1, 0);
+    xTaskCreate(mqtt_publish_task, "mqtt_publish_task", 4096, "Event: Nyan", 1, NULL);
 }
 
 void coffeeButton_Action() {
     printf("Button 2 pressed!\n");
-    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Event: Coffee", 0, 1, 0);
+    xTaskCreate(mqtt_publish_task, "mqtt_publish_task", 4096, "Event: Coffee", 1, NULL);
 }
 
 void lunchButton_Action() {
     printf("Button 3 pressed!\n");
-    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Event: Lunch", 0, 1, 0);
+    xTaskCreate(mqtt_publish_task, "mqtt_publish_task", 4096, "Event: Lunch", 1, NULL);
 }
 
 // Hook button callbacks
@@ -241,10 +250,10 @@ void draw_text_field(pax_buf_t *buf){
     // pax_draw_rect(buf, 0xFF2B2C3A, 0, offset_y, display_v_res, TEXT_FIELD_HEIGTH);
     for (int line = 0; line < num_lines; line++) {
         if (line_index[line] >= 0) {
-            printf("%d: %d = %s\r\n", line, line_index[line], line_buffers[line_index[line]]);
+            // printf("%d: %d = %s\r\n", line, line_index[line], line_buffers[line_index[line]]);
             pax_draw_text(buf, 0xFF2B2C3A, pax_font_sky_mono, 18, 5, offset_y + (24 * line), line_buffers[line_index[line]]);
         } else {
-            printf("%d: (empty)\r\n", line);
+            // printf("%d: (empty)\r\n", line);
         }
     }
 }
@@ -297,7 +306,7 @@ void blit() {
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
     esp_mqtt_event_handle_t event = event_data;
-
+    printf("mqtt event");
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
             client = event->client;
@@ -317,15 +326,72 @@ static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_
     }
 }
 
-static void mqtt_app_start(void) {
+static void mqtt_task(void* pvParameters) {
     esp_mqtt_client_config_t mqtt_cfg = {
         .broker.address.uri = MQTT_BROKER_URI,
     };
 
-    esp_mqtt_client_handle_t client = esp_mqtt_client_init(&mqtt_cfg);
+    client = esp_mqtt_client_init(&mqtt_cfg);
     esp_mqtt_client_register_event(client, ESP_EVENT_ANY_ID, mqtt_event_handler, NULL);
+    vTaskDelay(pdMS_TO_TICKS(100));
     esp_mqtt_client_start(client);
+    vTaskDelete(NULL);
 }
+
+// static void initialize_sntp_task(void* pvParameters) {
+//     esp_sntp_init();
+//     esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL); // Use polling
+//     esp_sntp_setservername(0, "pool.ntp.org");     // Use a public NTP server
+
+//     // Wait for the system time to be set
+//     time_t now = 0;
+//     struct tm timeinfo = { 0 };
+//     int retry = 0;
+//     const int retry_count = 10;
+
+//     while (timeinfo.tm_year < (2016 - 1900) && ++retry < retry_count) {
+//         ESP_LOGI("sntp", "Waiting for system time to be set... (retry %d)", retry);
+//         vTaskDelay(2000 / portTICK_PERIOD_MS);
+//         time(&now);
+//         localtime_r(&now, &timeinfo);
+//     }
+
+//     // If the time is not set after multiple retries, print an error
+//     if (timeinfo.tm_year < (2016 - 1900) || retry >= retry_count) {
+//         ESP_LOGE("sntp", "Failed to sync with NTP server after %d retries", retry);
+//     } else {
+//         ESP_LOGI("sntp", "Time has been set successfully from NTP server");
+//     }
+
+//     vTaskDelete(NULL);
+// }
+
+
+static void wifi_connection_task(void* pvParameters) {
+    wifi_connect_try_all();
+    
+    if(wifi_connection_is_connected()) {
+        if(!mqtt_initialized)
+        {
+            mqtt_initialized = true;
+            xTaskCreate(mqtt_task, "mqtt_task", 8192, NULL, 8, NULL);
+            // xTaskCreate(initialize_sntp_task, "initialize_sntp_task", 8192, NULL, 8, NULL);
+        }
+        wifi_connected = true;
+        wifi_connecting = false;
+        esp_netif_ip_info_t* ip_info = wifi_get_ip_info();
+        add_line(ip4addr_ntoa((const ip4_addr_t*)&ip_info->ip));
+    }
+    vTaskDelete(NULL);
+}
+
+static void render_task(void* pvParameters) {
+    while(1) {
+        blit();
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
 
 void app_main(void) {
     init();
@@ -396,7 +462,13 @@ void app_main(void) {
 
     render_wallpaper_clock(false);
 
-    
+    if (wifi_remote_initialize() == ESP_OK) {
+        wifi_connection_init_stack();        
+    } else {
+        bsp_power_set_radio_state(BSP_POWER_RADIO_STATE_OFF);
+        ESP_LOGE(TAG, "WiFi radio not responding, did you flash ESP-HOSTED firmware?");
+        return;
+    }
     
     // Get input event queue from BSP
     ESP_ERROR_CHECK(bsp_input_get_queue(&input_event_queue));
@@ -405,40 +477,23 @@ void app_main(void) {
     
     
     bsp_led_initialize();
-    xTaskCreate(led_task, TAG, 4096, NULL, 10, NULL);
+    xTaskCreate(led_task, "led_task", 4096, NULL, 5, NULL);
     
-    bool sdcard_inserted = false;
-    bsp_input_read_action(BSP_INPUT_ACTION_TYPE_SD_CARD, &sdcard_inserted);
+    // bool sdcard_inserted = false;
+    // bsp_input_read_action(BSP_INPUT_ACTION_TYPE_SD_CARD, &sdcard_inserted);
     
-    if (sdcard_inserted) {
-        printf("SD card detected\r\n");
-        #if defined(CONFIG_BSP_TARGET_TANMATSU) || defined(CONFIG_BSP_TARGET_KONSOOL) || \
-        defined(CONFIG_BSP_TARGET_HACKERHOTEL_2026)
-        sd_pwr_ctrl_handle_t sd_pwr_handle = initialize_sd_ldo();
-        sd_mount_spi(sd_pwr_handle);
-        sd_card_present = true;
-        test_sd();
-        #endif
-    }
+    // if (sdcard_inserted) {
+    //     printf("SD card detected\r\n");
+    //     #if defined(CONFIG_BSP_TARGET_TANMATSU) || defined(CONFIG_BSP_TARGET_KONSOOL) || defined(CONFIG_BSP_TARGET_HACKERHOTEL_2026)
+    //     sd_pwr_ctrl_handle_t sd_pwr_handle = initialize_sd_ldo();
+    //     sd_mount_spi(sd_pwr_handle);
+    //     sd_card_present = true;
+    //     test_sd();
+    //     #endif
+    // }
     
-    if (wifi_remote_initialize() == ESP_OK) {
-        wifi_connection_init_stack();
-        wifi_connecting = true;
-        wifi_connect_try_all();
-        if(wifi_connection_is_connected()) {
-            wifi_connected = true;
-            esp_netif_ip_info_t* ip_info = wifi_get_ip_info();
-            add_line(ip4addr_ntoa((const ip4_addr_t*)&ip_info->ip));
-        } 
-    } else {
-        bsp_power_set_radio_state(BSP_POWER_RADIO_STATE_OFF);
-        ESP_LOGE(TAG, "WiFi radio not responding, did you flash ESP-HOSTED firmware?");
-        add_line("wifi radio fail");
-    }
-    blit();
-    
-    vTaskDelay(pdMS_TO_TICKS(500)); // make sure wifi is properly connected
-    mqtt_app_start();
+    // xTaskCreate(wifi_task, "wifi_task", 8192, NULL, 10, NULL);
+    xTaskCreate(render_task, "render_task", 4096, NULL, 10, NULL);
 
     while (1) {
         //TODO: 
@@ -452,32 +507,20 @@ void app_main(void) {
         // 8. Add wallpaper - done
 
         bsp_input_event_t event;
-        if (xQueueReceive(input_event_queue, &event, pdMS_TO_TICKS(50)) == pdTRUE) {
+        if(!wifi_connection_is_connected() && !wifi_connecting) {
+            wifi_connected = false;
+            wifi_connecting = true;
+            xTaskCreate(wifi_connection_task, "wifi_connection_task", 4096, NULL, 10, NULL);
+        }
+        if (xQueueReceive(input_event_queue, &event, portMAX_DELAY) == pdTRUE) {
             switch (event.type) {
-                // case INPUT_EVENT_TYPE_KEYBOARD: {
-                //     char ascii = event.args_keyboard.ascii;
-                //     if (ascii == '\b') {
-                //         size_t length = strlen(input_buffer);
-                //         if (length > 0) {
-                //             input_buffer[length - 1] = '\0';
-                //         }
-                //     } else if (ascii == '\r' || ascii == '\n') {
-                //         // Ignore
-                //     } else {
-                //         size_t length = strlen(input_buffer);
-                //         if (length < num_chars - 1) {
-                //             input_buffer[length]     = ascii;
-                //             input_buffer[length + 1] = '\0';
-                //         }
-                //     }
-                //     break;
-                // }
                 case INPUT_EVENT_TYPE_NAVIGATION: {
                     if (event.args_navigation.state) {
                         switch (event.args_navigation.key) {
                             case BSP_INPUT_NAVIGATION_KEY_F1:
-                                if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Debug: I require coffee!", 0, 1, 0);
-                                mqtt_msg_transmit = true;
+                                xTaskCreate(mqtt_publish_task, "mqtt_publish_task", 4096, "Debug: I require coffee!", 1, NULL);
+                                // if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Debug: I require coffee!", 0, 1, 0);
+                                // mqtt_msg_transmit = true;
                                 break;
                             case BSP_INPUT_NAVIGATION_KEY_RIGHT:
                                 selectNextButton(true);
@@ -502,6 +545,5 @@ void app_main(void) {
                     break;
             }
         }
-        blit();
     }
 }
