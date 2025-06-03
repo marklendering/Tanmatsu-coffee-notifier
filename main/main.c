@@ -66,12 +66,9 @@ extern uint8_t const wallpaper_end[] asm("_binary_wallpaper_png_end");
 
 bool inactive_show_time = false;
 
-#define num_lines 5
 #define num_chars 60
 
-char line_buffers[num_lines][num_chars];
-int  line_index[num_lines];
-char input_buffer[num_chars];
+char line_buffer[num_chars] = {0};
 uint8_t led_buffer[6 * 3] = {0};
 
 time_t now_time;
@@ -91,7 +88,7 @@ bool sd_card_present = false;
 #define BUTTON_WIDTH   100
 #define BUTTON_HEIGHT  100
 #define BUTTON_GAP     20
-#define TEXT_FIELD_HEIGTH  120
+#define TEXT_FIELD_HEIGTH  24
 
 
 const char* menu_title = "Event Notifier";
@@ -103,22 +100,24 @@ const char* buttons[] = {"Nyan", "Coffee", "Lunch"};
 
 void init(void) {
     line_mutex = xSemaphoreCreateMutex();
-    for (size_t i = 0; i < num_lines; i++) {
-        line_index[i] = i;
-    }
 }
 
 void add_line(char* text) {
     if (xSemaphoreTake(line_mutex, portMAX_DELAY)) {
-        for (size_t i = 0; i < strlen(text); i++) {
+
+        size_t len = strnlen(text, num_chars - 1);
+        for (size_t i = 0; i < len; i++) {
             if (text[i] == '\r' || text[i] == '\n') {
                 text[i] = ' ';
             }
         }
-        for (size_t i = 0; i < num_lines; i++) {
-            line_index[i] = (line_index[i] + 1) % num_lines;
-        }
-        strncpy(line_buffers[line_index[num_lines - 1]], text, num_chars);
+        text[len] = '\0';
+
+
+        // for (size_t i = 0; i < num_lines; i++) {
+        //     line_index[i] = (line_index[i] + 1) % num_lines;
+        // }
+        strncpy(line_buffer, text, num_chars);
         xSemaphoreGive(line_mutex);
     }
 }
@@ -192,17 +191,20 @@ int selected_button = 0;
 // Example callback handlers
 void nyanButton_Action() {
     printf("Button 1 pressed!\n");
-    xTaskCreate(mqtt_publish_task, "mqtt_publish_task", 4096, "Event: Nyan", 1, NULL);
+    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Event: Nyan", 0, 1, 0);
+    // xTaskCreate(mqtt_publish_task, "mqtt_publish_task", 4096, "Event: Nyan", 1, NULL);
 }
 
 void coffeeButton_Action() {
     printf("Button 2 pressed!\n");
-    xTaskCreate(mqtt_publish_task, "mqtt_publish_task", 4096, "Event: Coffee", 1, NULL);
+    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Event: Coffee", 0, 1, 0);
+    // xTaskCreate(mqtt_publish_task, "mqtt_publish_task", 4096, "Event: Coffee", 1, NULL);
 }
 
 void lunchButton_Action() {
     printf("Button 3 pressed!\n");
-    xTaskCreate(mqtt_publish_task, "mqtt_publish_task", 4096, "Event: Lunch", 1, NULL);
+    if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Event: Lunch", 0, 1, 0);
+    // xTaskCreate(mqtt_publish_task, "mqtt_publish_task", 4096, "Event: Lunch", 1, NULL);
 }
 
 // Hook button callbacks
@@ -247,14 +249,17 @@ void draw_buttons(pax_buf_t *buf) {
 
 void draw_text_field(pax_buf_t *buf){
     uint16_t offset_y = display_h_res - FOOTER_HEIGHT - TEXT_FIELD_HEIGTH;
+    if (xSemaphoreTake(line_mutex, portMAX_DELAY)) {
     // pax_draw_rect(buf, 0xFF2B2C3A, 0, offset_y, display_v_res, TEXT_FIELD_HEIGTH);
-    for (int line = 0; line < num_lines; line++) {
-        if (line_index[line] >= 0) {
-            // printf("%d: %d = %s\r\n", line, line_index[line], line_buffers[line_index[line]]);
-            pax_draw_text(buf, 0xFF2B2C3A, pax_font_sky_mono, 18, 5, offset_y + (24 * line), line_buffers[line_index[line]]);
-        } else {
-            // printf("%d: (empty)\r\n", line);
-        }
+    pax_draw_text(buf, 0xFF2B2C3A, pax_font_sky_mono, 18, 5, offset_y, line_buffer);
+    // for (int line = 0; line < num_lines; line++) {
+    //     if (line_index[line] >= 0) {
+    //         // printf("%d: %d = %s\r\n", line, line_index[line], line_buffers[line_index[line]]);
+    //     } else {
+    //         // printf("%d: (empty)\r\n", line);
+    //     }
+    // }
+    xSemaphoreGive(line_mutex);
     }
 }
 
@@ -518,8 +523,8 @@ void app_main(void) {
                     if (event.args_navigation.state) {
                         switch (event.args_navigation.key) {
                             case BSP_INPUT_NAVIGATION_KEY_F1:
-                                xTaskCreate(mqtt_publish_task, "mqtt_publish_task", 4096, "Debug: I require coffee!", 1, NULL);
-                                // if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Debug: I require coffee!", 0, 1, 0);
+                                // xTaskCreate(mqtt_publish_task, "mqtt_publish_task", 4096, "Debug: I require coffee!", 1, NULL);
+                                if(client) esp_mqtt_client_publish(client, "/esp32/coffee", "Debug: I require coffee!", 0, 1, 0);
                                 // mqtt_msg_transmit = true;
                                 break;
                             case BSP_INPUT_NAVIGATION_KEY_RIGHT:
