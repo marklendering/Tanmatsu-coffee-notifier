@@ -311,7 +311,7 @@ void blit() {
 
 static void mqtt_event_handler(void *handler_args, esp_event_base_t base, int32_t event_id, void *event_data) {
     esp_mqtt_event_handle_t event = event_data;
-    printf("mqtt event");
+    // printf("mqtt event");
     switch ((esp_mqtt_event_id_t)event_id) {
         case MQTT_EVENT_CONNECTED:
             client = event->client;
@@ -398,6 +398,41 @@ static void render_task(void* pvParameters) {
 }
 
 
+esp_err_t apply_timezone(void) {
+    char tzstring[64] = {0};
+    nvs_handle_t nvs_handle;
+    esp_err_t    res = nvs_open("system", NVS_READWRITE, &nvs_handle);
+    if (res != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS namespace");
+        return res;
+    }
+    size_t size = 0;
+    res         = nvs_get_str(nvs_handle, "tz", NULL, &size);
+    if (res != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to find NVS entry");
+        nvs_close(nvs_handle);
+        return res;
+    }
+    if (size > sizeof(tzstring)) {
+        ESP_LOGE(TAG, "Value in NVS is too long");
+        nvs_close(nvs_handle);
+        return ESP_ERR_NO_MEM;
+    }
+    res = nvs_get_str(nvs_handle, "tz", tzstring, &size);
+    if (res != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read NVS entry");
+        nvs_close(nvs_handle);
+        return res;
+    }
+    nvs_close(nvs_handle);
+
+    setenv("TZ", tzstring, 1);
+    tzset();
+
+    return res;
+}
+
+
 void app_main(void) {
     init();
     // Start the GPIO interrupt service
@@ -413,6 +448,9 @@ void app_main(void) {
 
     // Initialize the Board Support Package
     ESP_ERROR_CHECK(bsp_device_initialize());
+
+
+    apply_timezone();
 
 
     ESP_LOGW(TAG, "Switching radio off...\r\n");
